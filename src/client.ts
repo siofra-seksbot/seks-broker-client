@@ -150,16 +150,27 @@ export class BrokerClient {
    * List capabilities for this agent (if broker supports it)
    */
   async listCapabilities(): Promise<AgentCapabilities> {
-    // Try v2 capabilities endpoint; fall back to listing secrets
     try {
       return await this.failoverManager.executeWithFailover(async (endpoint, token) => {
         const response = await this.request(endpoint, token, '/v1/capabilities', {
           method: 'GET',
         });
-        return response.json() as Promise<AgentCapabilities>;
+        const data = await response.json() as {
+          ok?: boolean;
+          capabilities?: Array<{ provider: string; capability: string; secret_id: string; constraints?: string }>;
+        };
+        const caps = data.capabilities || [];
+        const providers = [...new Set(caps.map(c => c.provider))];
+        return {
+          agent_id: 'unknown',
+          agent_name: 'unknown',
+          providers,
+          channels: [],
+          features: [],
+          grants: caps,
+        } as AgentCapabilities & { grants: typeof caps };
       });
     } catch {
-      // Broker doesn't have capabilities endpoint — derive from secrets
       const secrets = await this.listSecrets();
       const providers = [...new Set(secrets.map(s => s.provider || 'imported'))];
       return {
