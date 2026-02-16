@@ -80,37 +80,52 @@ export class BrokerClient {
 
   /**
    * Get channel tokens (Discord, Telegram, etc.) for this agent
+   * Fetches known channel provider secrets by convention
    */
   async getChannelTokens(): Promise<ChannelTokens> {
-    return this.failoverManager.executeWithFailover(async (endpoint, token) => {
-      const response = await this.request(endpoint, token, '/v1/tokens/channels');
-      return response.json() as Promise<ChannelTokens>;
-    });
+    // Channel tokens are just secrets with known names
+    const channelSecretNames: Record<string, string> = {
+      discord: 'DISCORD_BOT_TOKEN',
+      telegram: 'TELEGRAM_BOT_TOKEN',
+      slack: 'SLACK_BOT_TOKEN',
+    };
+
+    const tokens: ChannelTokens = {};
+    for (const [channel, secretName] of Object.entries(channelSecretNames)) {
+      try {
+        tokens[channel] = await this.getSecret(secretName);
+      } catch {
+        // Secret doesn't exist for this channel — skip
+      }
+    }
+    return tokens;
   }
 
   /**
-   * Get a specific secret field from a provider
+   * Get a specific secret by name
    */
-  async getSecret(provider: string, field: string): Promise<string> {
+  async getSecret(name: string): Promise<string> {
     try {
       const response = await this.failoverManager.executeWithFailover(async (endpoint, token) => {
-        return this.request(endpoint, token, `/v1/secrets/${provider}/${field}`);
+        return this.request(endpoint, token, '/secrets/get', {
+          method: 'POST',
+          body: JSON.stringify({ name }),
+        });
       });
 
-      const data = await response.json() as { value?: unknown };
-      if (typeof data.value === 'string') {
+      const data = await response.json() as { ok?: boolean; value?: unknown; error?: string };
+      if (data.ok && typeof data.value === 'string') {
         return data.value;
       }
       
-      throw new SecretNotFoundError(provider, field);
+      throw new SecretNotFoundError(name, '', data.error);
     } catch (error) {
       if (error instanceof BrokerClientError) {
         throw error;
       }
       
-      // Convert HTTP 404 to SecretNotFoundError
       if (this.isHttpError(error, 404)) {
-        throw new SecretNotFoundError(provider, field, error);
+        throw new SecretNotFoundError(name, '', error);
       }
       
       throw error;
@@ -118,39 +133,70 @@ export class BrokerClient {
   }
 
   /**
-   * List capabilities for this agent
+   * List available secrets for this agent
    */
-  async listCapabilities(): Promise<AgentCapabilities> {
+  async listSecrets(): Promise<Array<{ name: string; provider: string }>> {
     return this.failoverManager.executeWithFailover(async (endpoint, token) => {
-      const response = await this.request(endpoint, token, '/v1/agent/capabilities');
-      return response.json() as Promise<AgentCapabilities>;
+      const response = await this.request(endpoint, token, '/secrets/list', {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      const data = await response.json() as { ok?: boolean; secrets?: Array<{ name: string; provider: string }> };
+      return data.secrets || [];
     });
   }
 
   /**
-   * Make a proxied request to a provider API through the broker
-   * The broker will inject appropriate credentials
+   * List capabilities for this agent (if broker supports it)
+   */
+  async listCapabilities(): Promise<AgentCapabilities> {
+    // Try v2 capabilities endpoint; fall back to listing secrets
+    try {
+      return await this.failoverManager.executeWithFailover(async (endpoint, token) => {
+        const response = await this.request(endpoint, token, '/api/capabilities', {
+          method: 'GET',
+        });
+        return response.json() as Promise<AgentCapabilities>;
+      });
+    } catch {
+      // Broker doesn't have capabilities endpoint — derive from secrets
+      const secrets = await this.listSecrets();
+      const providers = [...new Set(secrets.map(s => s.provider || 'imported'))];
+      return {
+        agent_id: 'unknown',
+        agent_name: 'unknown',
+        providers,
+        channels: [],
+        features: [],
+      };
+    }
+  }
+
+  /**
+   * Make a proxied request through the broker
+   * The broker injects credentials based on the secret name
    */
   async proxyRequest(
-    provider: string,
-    path: string,
-    options: BrokerProxyRequestOptions = {}
+    secretName: string,
+    url: string,
+    options: BrokerProxyRequestOptions & {
+      secretHeader?: string;
+      secretPrefix?: string;
+    } = {}
   ): Promise<Response> {
-    // Remove leading slash from path if present
-    const cleanPath = path.startsWith('/') ? path.slice(1) : path;
-    const proxyPath = `/v1/proxy/${provider}/${cleanPath}`;
-
     return this.failoverManager.executeWithFailover(async (endpoint, token) => {
-      const requestOptions: RequestInit = {
-        method: options.method || 'GET',
-        headers: options.headers || {},
-      };
-      
-      if (options.body !== undefined) {
-        requestOptions.body = options.body;
-      }
-      
-      return this.request(endpoint, token, proxyPath, requestOptions);
+      return this.request(endpoint, token, '/proxy/request', {
+        method: 'POST',
+        body: JSON.stringify({
+          url,
+          method: options.method || 'GET',
+          secretName,
+          secretHeader: options.secretHeader || 'Authorization',
+          secretPrefix: options.secretPrefix || 'Bearer ',
+          headers: options.headers,
+          body: options.body,
+        }),
+      });
     });
   }
 
