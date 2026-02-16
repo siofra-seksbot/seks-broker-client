@@ -1,0 +1,51 @@
+{
+  "name": "@seksbot/broker-client",
+  "version": "1.0.0",
+  "description": "Shared SEKS broker client library for TypeScript/Node.js tools",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/*.test.js",
+    "test:vitest": "vitest",
+    "dev": "tsc --watch",
+    "prepublishOnly": "npm run build"
+  },
+  "files": [
+    "dist/",
+    "src/",
+    "README.md"
+  ],
+  "keywords": [
+    "seks",
+    "broker",
+    "client",
+    "typescript",
+    "api"
+  ],
+  "author": "SEKS Bot Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SEKSBot/seks-broker-client.git"
+  },
+  "bugs": {
+    "url": "https://github.com/SEKSBot/seks-broker-client/issues"
+  },
+  "homepage": "https://github.com/SEKSBot/seks-broker-client#readme",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
