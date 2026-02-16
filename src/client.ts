@@ -153,7 +153,7 @@ export class BrokerClient {
     // Try v2 capabilities endpoint; fall back to listing secrets
     try {
       return await this.failoverManager.executeWithFailover(async (endpoint, token) => {
-        const response = await this.request(endpoint, token, '/api/capabilities', {
+        const response = await this.request(endpoint, token, '/v1/capabilities', {
           method: 'GET',
         });
         return response.json() as Promise<AgentCapabilities>;
